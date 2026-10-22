@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import asyncio
 from collections.abc import Callable
 import hashlib
 import secrets
@@ -9,12 +10,16 @@ import time
 
 from homeassistant.config_entries import ConfigEntry
 from homeassistant.core import CALLBACK_TYPE, HomeAssistant, callback
-from homeassistant.helpers.event import async_call_later
+from homeassistant.helpers.event import async_call_later, async_track_time_change
 from homeassistant.helpers.storage import Store
 from homeassistant.util import dt as dt_util
 
 from . import planner
 from .const import CONF_NAME, CONF_OFFICE_DAYS, HUB_STORE
+
+
+# Open event streams of the members together, so a leaked token cannot hold the host's connections.
+MAX_STREAMS = 20
 
 
 def _hash(token: str) -> str:
@@ -32,15 +37,32 @@ class OfficeHub:
         self._data: dict = {"members": {}, "skips": {}}
         self._timer: CALLBACK_TYPE | None = None
         self._listeners: list[Callable[[], None]] = []
+        # Per member its one open event stream: a queue that gets a token per change, None to close.
+        self._streams: dict[str, asyncio.Queue[bool | None]] = {}
+        self._midnight: CALLBACK_TYPE | None = None
 
     async def async_load(self) -> None:
         self._data = await self._store.async_load() or {"members": {}, "skips": {}}
         self._data["members"].setdefault(self.me, {"name": self.entry.data[CONF_NAME]})
         # A change that waited when Home Assistant stopped is published now, or when its minute is up.
         self._promote()
+        # A new day shows other days, also to the members on a stream.
+        self._midnight = async_track_time_change(self.hass, self._new_day, hour=0, minute=0, second=5)
 
     @callback
     def async_stop(self) -> None:
+        self._cancel_timer()
+        if self._midnight:
+            self._midnight()
+            self._midnight = None
+        for member in list(self._streams):
+            self._close_stream(member)
+
+    @callback
+    def _new_day(self, _now) -> None:
+        self.changed()
+
+    def _cancel_timer(self) -> None:
         if self._timer:
             self._timer()
             self._timer = None
@@ -80,15 +102,17 @@ class OfficeHub:
     def set_skip(self, member: str, day: str, skip: bool) -> None:
         planner.set_skip(self._data["skips"].setdefault(member, {}), day, skip, time.time())
         self._promote()
-        self._changed()
+        self.changed()
 
     def add_member(self, name: str) -> str:
         """A new token for the colleague of this name; a name that exists keeps its skip days."""
         token = secrets.token_urlsafe(32)
         member = planner.member_id(name)
         self._data["members"][member] = {"name": name.strip(), "token_hash": _hash(token)}
+        # The old token stops now, also on a stream that is open.
+        self._close_stream(member)
         self._save()
-        self._changed()
+        self.changed()
         return token
 
     def remove_member(self, member: str) -> None:
@@ -96,12 +120,13 @@ class OfficeHub:
             return
         self._data["members"].pop(member, None)
         self._data["skips"].pop(member, None)
+        self._close_stream(member)
         self._save()
-        self._changed()
+        self.changed()
 
     @callback
     def _promote(self, _now=None) -> None:
-        self.async_stop()
+        self._cancel_timer()
         today = dt_util.now().date()
         published = False
         for records in self._data["skips"].values():
@@ -112,11 +137,34 @@ class OfficeHub:
         if waiting:
             self._timer = async_call_later(self.hass, max(0, min(waiting) - time.time()) + 0.5, self._promote)
         if published:
-            self._changed()
+            self.changed()
+
+    def open_stream(self, member: str) -> asyncio.Queue[bool | None] | None:
+        """A stream for this member; it closes the member's older one. None when the host has too many."""
+        self._close_stream(member)
+        if len(self._streams) >= MAX_STREAMS:
+            return None
+        queue: asyncio.Queue[bool | None] = asyncio.Queue()
+        self._streams[member] = queue
+        return queue
+
+    def release_stream(self, member: str, queue: asyncio.Queue[bool | None]) -> None:
+        if self._streams.get(member) is queue:
+            del self._streams[member]
+
+    def _close_stream(self, member: str) -> None:
+        queue = self._streams.pop(member, None)
+        if queue is not None:
+            queue.put_nowait(None)
 
     def _save(self) -> None:
         self._store.async_delay_save(lambda: self._data, 1)
 
-    def _changed(self) -> None:
+    def changed(self) -> None:
+        """Something the members see changed: the local listeners and every open stream look again."""
         for listener in list(self._listeners):
             listener()
+        for queue in self._streams.values():
+            # One waiting change is enough: the stream sends the state as it is then.
+            if queue.empty():
+                queue.put_nowait(True)

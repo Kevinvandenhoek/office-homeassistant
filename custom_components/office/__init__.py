@@ -17,7 +17,7 @@ from homeassistant.helpers.aiohttp_client import async_get_clientsession
 from homeassistant.helpers.typing import ConfigType
 from homeassistant.loader import async_get_integration
 
-from .api import OfficeSkipDayView, OfficeStateView
+from .api import OfficeEventsView, OfficeSkipDayView, OfficeStateView
 from .client import OfficeClient
 from .const import CONF_ROLE, CONF_TOKEN, CONF_URL, DOMAIN, ROLE_HOST, STATIC_PATH
 from .coordinator import OfficeCoordinator
@@ -61,6 +61,7 @@ async def async_setup_entry(hass: HomeAssistant, entry: OfficeConfigEntry) -> bo
         if not domain.get("views"):
             hass.http.register_view(OfficeStateView())
             hass.http.register_view(OfficeSkipDayView())
+            hass.http.register_view(OfficeEventsView())
             domain["views"] = True
         coordinator = OfficeCoordinator(hass, entry, hub=hub)
     else:
@@ -68,6 +69,8 @@ async def async_setup_entry(hass: HomeAssistant, entry: OfficeConfigEntry) -> bo
         coordinator = OfficeCoordinator(hass, entry, client=client)
     await coordinator.async_config_entry_first_refresh()
     entry.runtime_data = coordinator
+    if entry.data[CONF_ROLE] != ROLE_HOST:
+        entry.async_create_background_task(hass, coordinator.listen(), "office stream")
     await Notifier(hass, entry, coordinator).async_start()
     # The settings are read when they are used, so only a change of the office days needs a fresh look.
     entry.async_on_unload(entry.add_update_listener(_options_updated))
@@ -76,7 +79,12 @@ async def async_setup_entry(hass: HomeAssistant, entry: OfficeConfigEntry) -> bo
 
 
 async def _options_updated(hass: HomeAssistant, entry: OfficeConfigEntry) -> None:
-    await entry.runtime_data.async_request_refresh()
+    hub = entry.runtime_data.hub
+    if hub:
+        # Other office days: the members on a stream get them now.
+        hub.changed()
+    else:
+        await entry.runtime_data.async_request_refresh()
 
 
 async def async_unload_entry(hass: HomeAssistant, entry: OfficeConfigEntry) -> bool:

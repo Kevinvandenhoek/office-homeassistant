@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import asyncio
 from datetime import timedelta
 import logging
 
@@ -16,18 +17,44 @@ from .hub import OfficeHub
 
 _LOGGER = logging.getLogger(__name__)
 
-# A member looks once a minute; the host too, so a new day shows after midnight.
-INTERVAL = timedelta(minutes=1)
+# The host looks at its own hub once a minute. A member gets every change on the host's stream, and looks
+# itself every 15 minutes and after every break in the stream, in case the stream misses something.
+HOST_INTERVAL = timedelta(minutes=1)
+MEMBER_INTERVAL = timedelta(minutes=15)
+# After a break the member connects again after 5 seconds, then twice as long each time, up to 5 minutes.
+RETRY_FIRST = 5
+RETRY_MAX = 300
 
 
 class OfficeCoordinator(DataUpdateCoordinator[dict]):
     def __init__(self, hass: HomeAssistant, entry: ConfigEntry, hub: OfficeHub | None = None,
                  client: OfficeClient | None = None) -> None:
-        super().__init__(hass, _LOGGER, config_entry=entry, name=DOMAIN, update_interval=INTERVAL)
+        super().__init__(hass, _LOGGER, config_entry=entry, name=DOMAIN,
+                         update_interval=HOST_INTERVAL if hub else MEMBER_INTERVAL)
         self.hub = hub
         self.client = client
         if hub:
             entry.async_on_unload(hub.async_add_listener(lambda: self.async_set_updated_data(hub.view(hub.me))))
+
+    async def listen(self) -> None:
+        """A member's stream from the host, connected again after every break; runs until the entry unloads."""
+        wait = RETRY_FIRST
+        while True:
+            try:
+                async for data in self.client.events():
+                    _LOGGER.debug("office: state from the stream")
+                    self.async_set_updated_data(data)
+                    wait = RETRY_FIRST
+            except OfficeAuthError:
+                # The poll asks for a new token; the stream waits for the entry to load again.
+                await self.async_request_refresh()
+                return
+            except OfficeApiError as err:
+                _LOGGER.debug("office: the stream broke: %s", err)
+            # Look once now, so the entities show at once whether the host is still there.
+            await self.async_request_refresh()
+            await asyncio.sleep(wait)
+            wait = min(wait * 2, RETRY_MAX)
 
     async def _async_update_data(self) -> dict:
         if self.hub:

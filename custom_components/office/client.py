@@ -3,6 +3,8 @@
 from __future__ import annotations
 
 import asyncio
+from collections.abc import AsyncIterator
+import json
 
 import aiohttp
 
@@ -26,6 +28,28 @@ class OfficeClient:
     async def state(self) -> dict:
         return await self._request("GET", self._base)
 
+    async def events(self) -> AsyncIterator[dict]:
+        """The state at every change, from the stream of the host, until it closes. The host sends a line every
+        30 seconds, so 90 seconds without one means the connection is gone."""
+        try:
+            async with self._session.get(
+                f"{self._base}/events", headers=self._headers, timeout=aiohttp.ClientTimeout(total=None, sock_read=90)
+            ) as resp:
+                if resp.status in (401, 403):
+                    raise OfficeAuthError("the host does not know this token")
+                if resp.status >= 400:
+                    raise OfficeApiError(f"{resp.status}: {(await resp.text())[:200]}")
+                lines: list[str] = []
+                async for raw in resp.content:
+                    line = raw.decode().rstrip("\r\n")
+                    if line.startswith("data:"):
+                        lines.append(line[5:].lstrip())
+                    elif not line and lines:
+                        yield _checked(json.loads("\n".join(lines)))
+                        lines = []
+        except (aiohttp.ClientError, asyncio.TimeoutError, ValueError) as err:
+            raise OfficeApiError(str(err) or type(err).__name__) from err
+
     async def set_skip(self, day: str, skip: bool) -> dict:
         return await self._request("PUT", f"{self._base}/skip_days/{day}", {"skip": skip})
 
@@ -41,6 +65,10 @@ class OfficeClient:
                 data = await resp.json()
         except (aiohttp.ClientError, asyncio.TimeoutError, ValueError) as err:
             raise OfficeApiError(str(err) or type(err).__name__) from err
-        if not isinstance(data, dict) or data.get("version") != 1:
-            raise OfficeApiError("unexpected answer from the host")
-        return data
+        return _checked(data)
+
+
+def _checked(data) -> dict:
+    if not isinstance(data, dict) or data.get("version") != 1:
+        raise OfficeApiError("unexpected answer from the host")
+    return data

@@ -27,8 +27,9 @@ reachable from outside, for example through a Cloudflare Tunnel or Nabu Casa.
 - A skip day can be set for today or for an office day up to Sunday of next week. The host picks
   the office days (Configure, **Office days**), Monday to Thursday by default.
 - A change reaches the others after one minute. Undo it within that minute and nobody sees it.
-- A member looks at the host once a minute. When the host is not reachable, the entities are
-  unavailable and the card says so.
+- A member keeps a stream open to the host (Server-Sent Events) and gets every change at once. It
+  connects again after a break, and also looks every 15 minutes in case the stream missed
+  something. When the host is not reachable, the entities are unavailable and the card says so.
 - Each house sends its own pushes, from what changes at the colleagues: when a colleague sets or
   clears a skip day, and a morning reminder on the day itself.
 
@@ -55,6 +56,10 @@ The service `office.set_skip_day` with `date` and `skip` sets your own skip day 
 - A wrong token counts as a failed login, so Home Assistant's IP ban applies when it is turned on.
   A member whose token was renewed must paste the new one soon: Home Assistant asks for it.
 - The API only accepts a small JSON body with one boolean, for an office day in the shown weeks.
+- The stream on `/api/office/v1/events` only sends; it takes nothing in. Each member has one stream
+  (a new one closes the old one), the host holds at most 20, and a renewed token or a removed
+  colleague closes the stream at once. After an hour the host closes it, so the token is checked
+  again when the member connects.
 
 ## Development
 
