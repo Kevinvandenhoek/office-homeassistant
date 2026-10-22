@@ -9,8 +9,8 @@ import voluptuous as vol
 from homeassistant.components.frontend import add_extra_js_url
 from homeassistant.components.http import StaticPathConfig
 from homeassistant.config_entries import ConfigEntry, ConfigEntryState
-from homeassistant.const import Platform
-from homeassistant.core import HomeAssistant, ServiceCall
+from homeassistant.const import EVENT_HOMEASSISTANT_STOP, Platform
+from homeassistant.core import HomeAssistant, ServiceCall, callback
 from homeassistant.exceptions import ServiceValidationError
 from homeassistant.helpers import config_validation as cv
 from homeassistant.helpers.aiohttp_client import async_get_clientsession
@@ -54,6 +54,8 @@ async def async_setup_entry(hass: HomeAssistant, entry: OfficeConfigEntry) -> bo
         hub = OfficeHub(hass, entry)
         await hub.async_load()
         entry.async_on_unload(hub.async_stop)
+        # Also when Home Assistant stops, so a restart does not wait for the open streams.
+        entry.async_on_unload(hass.bus.async_listen(EVENT_HOMEASSISTANT_STOP, callback(lambda _event: hub.async_stop())))
         domain = hass.data.setdefault(DOMAIN, {})
         domain["hub"] = hub
         entry.async_on_unload(lambda: domain.pop("hub", None))

@@ -18,7 +18,10 @@ from . import planner
 from .const import CONF_NAME, CONF_OFFICE_DAYS, HUB_STORE
 
 
-# Open event streams of the members together, so a leaked token cannot hold the host's connections.
+# Open event streams: a member may listen from a few places at once, and a new one beyond that closes their oldest,
+# so a stream left over from a broken connection never blocks a new one; together capped, so a leaked token cannot
+# hold the host's connections.
+STREAMS_PER_MEMBER = 3
 MAX_STREAMS = 20
 
 
@@ -37,8 +40,8 @@ class OfficeHub:
         self._data: dict = {"members": {}, "skips": {}}
         self._timer: CALLBACK_TYPE | None = None
         self._listeners: list[Callable[[], None]] = []
-        # Per member its one open event stream: a queue that gets a token per change, None to close.
-        self._streams: dict[str, asyncio.Queue[bool | None]] = {}
+        # Per member its open event streams, oldest first: each a queue that gets True per change, None to close.
+        self._streams: dict[str, list[asyncio.Queue[bool | None]]] = {}
         self._midnight: CALLBACK_TYPE | None = None
 
     async def async_load(self) -> None:
@@ -140,21 +143,27 @@ class OfficeHub:
             self.changed()
 
     def open_stream(self, member: str) -> asyncio.Queue[bool | None] | None:
-        """A stream for this member; it closes the member's older one. None when the host has too many."""
-        self._close_stream(member)
-        if len(self._streams) >= MAX_STREAMS:
+        """A stream for this member; beyond STREAMS_PER_MEMBER it closes their oldest. None when the host has too many."""
+        mine = self._streams.setdefault(member, [])
+        if len(mine) >= STREAMS_PER_MEMBER:
+            mine.pop(0).put_nowait(None)
+        if sum(len(q) for q in self._streams.values()) >= MAX_STREAMS:
+            if not mine:
+                del self._streams[member]
             return None
         queue: asyncio.Queue[bool | None] = asyncio.Queue()
-        self._streams[member] = queue
+        mine.append(queue)
         return queue
 
     def release_stream(self, member: str, queue: asyncio.Queue[bool | None]) -> None:
-        if self._streams.get(member) is queue:
-            del self._streams[member]
+        mine = self._streams.get(member, [])
+        if queue in mine:
+            mine.remove(queue)
+        if not mine:
+            self._streams.pop(member, None)
 
     def _close_stream(self, member: str) -> None:
-        queue = self._streams.pop(member, None)
-        if queue is not None:
+        for queue in self._streams.pop(member, []):
             queue.put_nowait(None)
 
     def _save(self) -> None:
@@ -164,7 +173,8 @@ class OfficeHub:
         """Something the members see changed: the local listeners and every open stream look again."""
         for listener in list(self._listeners):
             listener()
-        for queue in self._streams.values():
-            # One waiting change is enough: the stream sends the state as it is then.
-            if queue.empty():
-                queue.put_nowait(True)
+        for queues in self._streams.values():
+            for queue in queues:
+                # One waiting change is enough: the stream sends the state as it is then.
+                if queue.empty():
+                    queue.put_nowait(True)

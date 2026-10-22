@@ -56,9 +56,9 @@ The service `office.set_skip_day` with `date` and `skip` sets your own skip day 
 - A wrong token counts as a failed login, so Home Assistant's IP ban applies when it is turned on.
   A member whose token was renewed must paste the new one soon: Home Assistant asks for it.
 - The API only accepts a small JSON body with one boolean, for an office day in the shown weeks.
-- The stream on `/api/office/v1/events` only sends; it takes nothing in. Each member has one stream
-  (a new one closes the old one), the host holds at most 20, and a renewed token or a removed
-  colleague closes the stream at once. After an hour the host closes it, so the token is checked
+- The stream on `/api/office/v1/events` only sends; it takes nothing in. A member may have three
+  streams at once (a fourth closes their oldest), the host holds at most 20, and a renewed token,
+  a removed colleague or Home Assistant stopping closes them at once. After an hour the host closes it, so the token is checked
   again when the member connects.
 
 ## Development
