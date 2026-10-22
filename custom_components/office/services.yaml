@@ -1,0 +1,12 @@
+set_skip_day:
+  fields:
+    date:
+      required: true
+      example: "2026-10-29"
+      selector:
+        date:
+    skip:
+      required: true
+      default: true
+      selector:
+        boolean:

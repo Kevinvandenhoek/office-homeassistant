@@ -1,0 +1,132 @@
+{
+  "config": {
+    "step": {
+      "user": {
+        "title": "Office",
+        "description": "Join an office that a colleague hosts in their Home Assistant, or host the office here.",
+        "menu_options": {
+          "member": "Join an office",
+          "host": "Host the office here"
+        }
+      },
+      "member": {
+        "title": "Join an office",
+        "description": "Ask the host for the address of their Home Assistant and a token.",
+        "data": {
+          "url": "Address of the host",
+          "token": "Token"
+        },
+        "data_description": {
+          "url": "For example https://home.example.com, the address the host reaches Home Assistant on from outside.",
+          "token": "The host makes it under Office, Configure, Add a colleague or renew a token."
+        }
+      },
+      "host": {
+        "title": "Host the office",
+        "description": "Colleagues join with the address of this Home Assistant from outside and a token you make for them.",
+        "data": {
+          "name": "Your name"
+        }
+      },
+      "reauth_confirm": {
+        "title": "New token",
+        "description": "The host no longer knows the token. Ask for a new one.",
+        "data": {
+          "token": "Token"
+        }
+      }
+    },
+    "error": {
+      "invalid_auth": "The host does not know this token.",
+      "cannot_connect": "The host is not reachable at this address.",
+      "invalid_name": "Use a name with letters or numbers."
+    },
+    "abort": {
+      "already_configured": "Office is already set up here.",
+      "reauth_successful": "The new token works."
+    }
+  },
+  "options": {
+    "step": {
+      "init": {
+        "title": "Office",
+        "menu_options": {
+          "office_days": "Office days",
+          "add_member": "Add a colleague or renew a token",
+          "remove_member": "Remove a colleague"
+        }
+      },
+      "office_days": {
+        "title": "Office days",
+        "description": "The days you work at the office. A skip day can only be set on these days, for everyone.",
+        "data": {
+          "office_days": "Office days"
+        }
+      },
+      "add_member": {
+        "title": "Add a colleague",
+        "description": "A name that exists gets a new token and keeps its skip days; the old token stops working.",
+        "data": {
+          "name": "Name"
+        }
+      },
+      "token": {
+        "title": "Token for {name}",
+        "description": "Give {name} this token. It is shown only this once.\n\n`{token}`"
+      },
+      "remove_member": {
+        "title": "Remove a colleague",
+        "data": {
+          "member": "Colleague"
+        }
+      }
+    },
+    "abort": {
+      "no_colleagues": "There are no colleagues yet."
+    }
+  },
+  "entity": {
+    "select": {
+      "skip_day_phone": {
+        "name": "Skip day phone"
+      }
+    },
+    "sensor": {
+      "skip_days": {
+        "name": "Skip days"
+      }
+    },
+    "switch": {
+      "skip_day": {
+        "name": "Skip day"
+      },
+      "skip_day_notifications": {
+        "name": "Skip day notifications"
+      }
+    },
+    "time": {
+      "skip_day_morning_reminder": {
+        "name": "Skip day morning reminder"
+      },
+      "skip_day_notify_until": {
+        "name": "Skip day notify until"
+      }
+    }
+  },
+  "services": {
+    "set_skip_day": {
+      "name": "Set skip day",
+      "description": "Sets or clears your own skip day on an office day from today to Sunday next week. The others see it after a minute.",
+      "fields": {
+        "date": {
+          "name": "Date",
+          "description": "The office day."
+        },
+        "skip": {
+          "name": "Skip",
+          "description": "On to skip the office that day, off to come after all."
+        }
+      }
+    }
+  }
+}
