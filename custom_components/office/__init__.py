@@ -58,7 +58,12 @@ async def async_setup_entry(hass: HomeAssistant, entry: OfficeConfigEntry) -> bo
         entry.async_on_unload(hass.bus.async_listen(EVENT_HOMEASSISTANT_STOP, callback(lambda _event: hub.async_stop())))
         domain = hass.data.setdefault(DOMAIN, {})
         domain["hub"] = hub
-        entry.async_on_unload(lambda: domain.pop("hub", None))
+
+        # Not a lambda: Home Assistant awaits whatever an unload callback returns, and pop returns the hub.
+        def forget_hub() -> None:
+            domain.pop("hub", None)
+
+        entry.async_on_unload(forget_hub)
         # Views cannot be removed again; they look the hub up, and answer 503 while it is gone.
         if not domain.get("views"):
             hass.http.register_view(OfficeStateView())
