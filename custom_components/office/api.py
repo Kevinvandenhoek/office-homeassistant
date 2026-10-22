@@ -10,6 +10,7 @@ from __future__ import annotations
 import asyncio
 from http import HTTPStatus
 import json
+import logging
 
 from aiohttp import web
 
@@ -19,6 +20,8 @@ from homeassistant.core import HomeAssistant
 
 from .const import API_PATH, DOMAIN
 from .hub import OfficeHub
+
+_LOGGER = logging.getLogger(__name__)
 
 MAX_BODY = 1024
 # A line every 30 seconds, as Cloudflare closes a quiet connection after 100; after an hour the stream closes, so
@@ -55,6 +58,7 @@ class OfficeStateView(HomeAssistantView):
         hub, member, error = await _member(request)
         if error:
             return error
+        _LOGGER.debug("office: %s looked at the state", member)
         return web.json_response(hub.view(member))
 
 
@@ -97,6 +101,7 @@ class OfficeEventsView(HomeAssistantView):
         queue = hub.open_stream(member)
         if queue is None:
             return _error(HTTPStatus.SERVICE_UNAVAILABLE, "too many streams")
+        _LOGGER.debug("office: %s opened a stream", member)
         response = web.StreamResponse(headers={
             "Content-Type": "text/event-stream", "Cache-Control": "no-cache", "X-Accel-Buffering": "no",
         })
@@ -118,6 +123,7 @@ class OfficeEventsView(HomeAssistantView):
             pass
         finally:
             hub.release_stream(member, queue)
+            _LOGGER.debug("office: the stream of %s closed", member)
         return response
 
 
